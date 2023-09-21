@@ -120,19 +120,20 @@ def api_to_data(content_type, sort_type, period_type, use_search_term, page_coun
         page_count = "1"
     
     page_value = page_count.split('/')[0]
+    civitai_base_url = getattr(opts, "civitai_base_url")
     if search_term != gl.previous_search_term or gl.tile_count != gl.previous_tile_count or gl.inputs_changed or gl.contentChange:
         gl.previous_search_term = search_term
         gl.previous_tile_count = gl.tile_count
-        api_url = f"https://civitai.com/api/v1/models?limit={gl.tile_count}&page=1"
+        api_url = urllib.parse.urljoin(civitai_base_url, f"/api/v1/models?limit={gl.tile_count}&page=1")
     else:
-        api_url = f"https://civitai.com/api/v1/models?limit={gl.tile_count}&page={page_value}"
+        api_url = urllib.parse.urljoin(civitai_base_url, f"/api/v1/models?limit={gl.tile_count}&page={page_value}")
     
     if timeOut:
         if isNext:
             next_page = str(int(page_value) + 1)
         else:
             next_page = str(int(page_value) - 1)
-        api_url = f"https://civitai.com/api/v1/models?limit={gl.tile_count}&page={next_page}"
+        api_url = urllib.parse.urljoin(civitai_base_url, f"/api/v1/models?limit={gl.tile_count}&page={next_page}")
     
     period_type = period_type.replace(" ", "")
     query = {'sort': sort_type, 'period': period_type}

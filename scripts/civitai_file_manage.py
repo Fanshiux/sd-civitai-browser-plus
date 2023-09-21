@@ -14,6 +14,8 @@ import scripts.civitai_global as gl
 import scripts.civitai_api as _api
 import scripts.civitai_file_manage as _file
 import scripts.civitai_download as _download
+from bs4 import BeautifulSoup
+from modules.shared import opts
 try:
     from send2trash import send2trash
 except:
@@ -110,7 +112,7 @@ def delete_associated_files(directory, base_name):
 def save_preview(preview_html, file_name, install_path):
     if not os.path.exists(install_path):
         os.makedirs(install_path)
-    img_urls = re.findall(r'data-preview-img=[\'"]?([^\'" >]+)', preview_html)
+    img_urls = parse_image_urls(preview_html)
 
     if not img_urls:
         return
@@ -135,7 +137,7 @@ def save_preview(preview_html, file_name, install_path):
 def save_images(preview_html, model_filename, model_name, install_path):
     if not os.path.exists(install_path):
         os.makedirs(install_path)
-    img_urls = re.findall(r'data-sampleimg="true" src=[\'"]?([^\'" >]+)', preview_html)
+    img_urls = parse_image_urls(preview_html)
     
     name = os.path.splitext(model_filename)[0]
 
@@ -345,7 +347,7 @@ def get_models(file_path):
     
     if not modelId:
         model_hash = gen_sha256(file_path)
-        by_hash = f"https://civitai.com/api/v1/model-versions/by-hash/{model_hash}"
+        by_hash = urllib.parse.urljoin(getattr(opts, "civitai_base_url"), f"/api/v1/model-versions/by-hash/{model_hash}")
     
     try:
         if not modelId:
@@ -485,9 +487,9 @@ def file_scan(folders, ver_finish, tag_finish, installed_finish, progress=gr.Pro
 
     all_model_ids = list(set(all_model_ids))
     if from_installed:
-        base_url = f"https://civitai.com/api/v1/models?limit={gl.tile_count}"
+        base_url = urllib.parse.urljoin(getattr(opts, "civitai_base_url"), f"/api/v1/models?limit={gl.tile_count}")
     else:
-        base_url = "https://civitai.com/api/v1/models?limit=100"
+        base_url = urllib.parse.urljoin(getattr(opts, "civitai_base_url"), "/api/v1/models?limit=100")
     url = f"{base_url}{''.join(all_model_ids)}"
     
     if not from_installed:
@@ -638,3 +640,21 @@ def cancel_scan():
         else:
             time.sleep(0.5)
             continue
+
+# Use regular expressions to get the image URL in HTML
+# returns a list of image URLs
+def parse_image_urls(preview_html):
+    # Parse the HTML
+    soup = BeautifulSoup(preview_html, 'html.parser')
+
+    # Find all the images
+    images = soup.find_all("img")
+
+    # Get civitai base url
+    civitai_base_url = getattr(opts, "civitai_base_url")
+    civitai_base_url = civitai_base_url if civitai_base_url[-1] == "/" else civitai_base_url + "/"
+
+    # Get the image URLs
+    image_urls = [civitai_base_url + image["src"] for image in images]
+
+    return image_urls

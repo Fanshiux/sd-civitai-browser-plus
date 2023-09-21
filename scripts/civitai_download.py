@@ -7,6 +7,7 @@ import os
 import re
 import random
 import platform
+import urllib.parse
 import socket
 import stat
 import json
@@ -370,6 +371,8 @@ def download_file_old(url, file_path, model_name, model_version, progress=gr.Pro
                 os.remove(file_path)
 
 def download_create_thread(download_finish, url, file_name, preview_html, create_json, trained_tags, install_path, model_name, list_versions, progress=gr.Progress()):
+    url = urllib.parse.urljoin(getattr(opts, "civitai_base_url"), urllib.parse.urlparse(url).path)
+
     gr_components = _api.update_model_versions(model_name)
     gl.cancel_status = False
     try:

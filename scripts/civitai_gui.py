@@ -686,6 +686,7 @@ def on_ui_settings():
             return self
         shared.OptionInfo.info = info
     
+    shared.opts.add_option("civitai_base_url", shared.OptionInfo("https://civitai.com", "Civitai base URL", section=section).info("Change this to point to your Civit AI instance"))
     shared.opts.add_option("use_aria2", shared.OptionInfo(True, "Download models using Aria2", section=section).info("Disable to use the old download method"))
     shared.opts.add_option("disable_dns", shared.OptionInfo(False, "Disable Async DNS for Aria2", section=section).info("Useful for users who use PortMaster or other software that controls the DNS"))
     shared.opts.add_option("show_log", shared.OptionInfo(False, "Show Aria2 Logs in CMD", section=section).info("Requires Web-UI Restart"))
