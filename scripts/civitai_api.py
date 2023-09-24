@@ -18,14 +18,6 @@ import time
 
 gl.init()
 
-def git_tag():
-    try:
-        return subprocess.check_output([os.environ.get('GIT', "git"), "describe", "--tags"], shell=False, encoding='utf8').strip()
-    except:
-        return "None"
-
-ver = git_tag()
-
 def update_dl_url(trained_tags, model_id=None, model_name=None, model_version=None):    
     if model_version and "[Installed]" in model_version:
         model_version = model_version.replace(" [Installed]", "")
@@ -56,7 +48,7 @@ def update_dl_url(trained_tags, model_id=None, model_name=None, model_version=No
         )
 
 def contenttype_folder(content_type):
-    folder = None
+    use_LORA = getattr(opts, "use_LORA", False)
     if content_type == "modelFolder":
         folder = os.path.join(models_path)
     
@@ -79,20 +71,14 @@ def contenttype_folder(content_type):
         folder = cmd_opts.lora_dir
         
     elif content_type == "LoCon":
-        if gl.scan_files:
-            folder = os.path.join(models_path,"LyCORIS")
-            return folder
-        try:
-            parsed_version = version.parse(ver) 
-            if version.parse(ver) >= version.parse("1.5"):
-                folder = cmd_opts.lora_dir
-        except version.InvalidVersion or parsed_version < version.parse("1.5"):
-            if "lyco_dir" in cmd_opts:
-                folder = f"{cmd_opts.lyco_dir}"
-            elif "lyco_dir_backcompat" in cmd_opts:
-                folder = f"{cmd_opts.lyco_dir_backcompat}"
-            else:
-                folder = os.path.join(models_path,"LyCORIS")          
+        if "lyco_dir" in cmd_opts:
+            folder = f"{cmd_opts.lyco_dir}"
+        elif "lyco_dir_backcompat" in cmd_opts:
+            folder = f"{cmd_opts.lyco_dir_backcompat}"
+        else:
+            folder = os.path.join(models_path,"LyCORIS")    
+        if use_LORA:
+            folder = cmd_opts.lora_dir      
             
     elif content_type == "VAE":
         if cmd_opts.vae_dir:
@@ -221,10 +207,16 @@ def model_list_html(json_data, model_dict):
                             if file.endswith('.json'):
                                 json_path = os.path.join(root, file)
                                 with open(json_path, 'r') as f:
-                                    json_data = json.load(f)
-                                    sha256 = json_data.get('sha256')
-                                    if sha256:
-                                        existing_files_sha256.append(sha256.upper())
+                                    try:
+                                        json_data = json.load(f)
+                                        if isinstance(json_data, dict):
+                                            sha256 = json_data.get('sha256')
+                                            if sha256:
+                                                existing_files_sha256.append(sha256.upper())
+                                        else:
+                                            print(f"Invalid JSON data in {json_path}. Expected a dictionary.")
+                                    except json.JSONDecodeError as e:
+                                        print(f"Error decoding JSON in {json_path}: {str(e)}")
                     
                     installstatus = None
                     
@@ -435,16 +427,6 @@ def update_model_versions(model_name):
 
         model_folder = os.path.join(contenttype_folder(selected_content_type))
         gl.main_folder = model_folder
-        existing_files_sha256 = []
-        for root, dirs, files in os.walk(model_folder):
-            for file in files:
-                if file.endswith('.json'):
-                    json_path = os.path.join(root, file)
-                    with open(json_path, 'r') as f:
-                        json_data = json.load(f)
-                        sha256 = json_data.get('sha256')
-                        if sha256:
-                            existing_files_sha256.append(sha256.upper())
 
         for root, dirs, _ in os.walk(model_folder):
             for d in dirs:
@@ -453,20 +435,37 @@ def update_model_versions(model_name):
                     sub_folders.append(f'{os.sep}{sub_folder}')
         
         folder_location = model_folder
-
+        found = False
         for item in gl.json_data['items']:
             if item['name'] == model_name:
                 for version in item['modelVersions']:
                     versions_dict[version['name']].append(item["name"])
-                    for root, dirs, files in os.walk(model_folder):
-                        for file in files:
-                            for version_file in version['files']:
-                                file_sha256 = version_file.get('hashes', {}).get('SHA256', "").upper()
-                                if version_file['name'] == file or file_sha256 in existing_files_sha256:
-                                    installed_versions.append(version['name'])
-                                    if root != model_folder:
+                    for version_file in version['files']:
+                        file_sha256 = version_file.get('hashes', {}).get('SHA256', "").upper()
+                        version_filename = version_file['name']
+                        for root, _, files in os.walk(model_folder):
+                            for file in files:
+                                if not found:
+                                    if file.endswith('.json'):
+                                        try:
+                                            json_path = os.path.join(root, file)
+                                            with open(json_path, 'r') as f:
+                                                json_data = json.load(f)
+                                                if isinstance(json_data, dict):
+                                                    sha256 = json_data.get('sha256', "").upper()
+                                                    if sha256 == file_sha256:
+                                                        installed_versions.append(version['name'])
+                                                        found = True
+                                        except:
+                                            print(f"failed to read: \"{file}\"")
+                                    
+                                    if version_filename == file:
+                                        installed_versions.append(version['name'])
+                                        found = True
+
+                                    if found:
                                         folder_location = root
-                                    break
+                                        break
 
         default_subfolder = folder_location.replace(model_folder, '')
         default_subfolder = default_subfolder if default_subfolder else "None"
@@ -488,16 +487,15 @@ def update_model_versions(model_name):
         )
 
 def update_model_info(model_name=None, model_version=None):
+    BtnDown = True
+    BtnDel = False
+    file_checked = False
     if model_version and "[Installed]" in model_version:
-        BtnDown = False
-        BtnDel = True
         model_version = model_version.replace(" [Installed]", "")
-    else:
-        BtnDown = True
-        BtnDel = False
     if gl.isDownloading:
         BtnDown = False
         BtnDel = False
+        file_checked = True
     if model_name and model_version:
         output_html = ""
         output_training = ""
@@ -512,6 +510,8 @@ def update_model_info(model_name=None, model_version=None):
         sha256_value = None
         for item in gl.json_data['items']:
             if item['name'] == model_name:
+                content_type = item['type']
+                model_folder = os.path.join(contenttype_folder(content_type))
                 model_uploader = item['creator']['username']
                 uploader_avatar = item['creator']['image']
                 if uploader_avatar is None:
@@ -636,9 +636,26 @@ def update_model_info(model_name=None, model_version=None):
                         </div>
                         <div align=center>{img_html}</div>
                         '''
-                                        
+                
                 default_file = file_list[0] if file_list else None
-                        
+                for root, _, files in os.walk(model_folder):
+                    if model_filename in files:
+                        BtnDown = False
+                        BtnDel = True
+                        file_checked = True
+                        break
+
+                if not file_checked:
+                    for root, _, files in os.walk(model_folder):
+                        for filename in files:
+                            if filename.endswith('.json'):
+                                with open(os.path.join(root, filename), 'r') as f:
+                                    data = json.load(f)
+                                    if data.get('sha256') == sha256_value:
+                                        BtnDown = False
+                                        BtnDel = True
+                                        file_checked = True
+                                        break
         return  (
                 gr.HTML.update(value=output_html), # Model Preview
                 gr.Textbox.update(value=output_training), # Trained Tags
@@ -669,10 +686,13 @@ def update_file_info(model_name, model_version, file_metadata):
     if model_name and model_version:
         for item in gl.json_data['items']:
             if item['name'] == model_name:
+                content_type = item['type']
+                model_folder = os.path.join(contenttype_folder(content_type))
                 for model in item['modelVersions']:
                     if model['name'] == model_version:
                         for file in model['files']:
                             file_id = file.get('id', 'Unknown')
+                            file_name = file.get('name', 'Unknown')
                             sha256 = file['hashes'].get('SHA256', 'Unknown')
                             metadata = file.get('metadata', {})
                             file_size = metadata.get('size', 'Unknown')
@@ -682,16 +702,36 @@ def update_file_info(model_name, model_version, file_metadata):
                             filesize = _download.convert_size(sizeKB)
 
                             if f"{file_size} {file_format} {file_fp} ({filesize})" == file_metadata:
+                                installed = False
+
+                                for root, _, files in os.walk(model_folder):
+                                    if file_name in files:
+                                        installed = True
+                                        break
+
+                                if not installed:
+                                    for root, _, files in os.walk(model_folder):
+                                        for filename in files:
+                                            if filename.endswith('.json'):
+                                                with open(os.path.join(root, filename), 'r') as f:
+                                                    data = json.load(f)
+                                                    if data.get('sha256') == sha256:
+                                                        installed = True
+                                                        break
                                 return  (
                                         gr.Textbox.update(value=file['name']),  # Update model_filename Textbox
                                         gr.Textbox.update(value=file_id),  # Update ID Textbox
-                                        gr.Textbox.update(value=sha256)
+                                        gr.Textbox.update(value=sha256), # sha256 textbox
+                                        gr.Button.update(interactive=False if installed else True, visible=False if installed else True), # Download Button
+                                        gr.Button.update(interactive=True if installed else False, visible=True if installed else False)  # Delete Button
                                 )
     
     return  (
-            gr.Textbox.update(value=None),  # Update model_filename Textbox
-            gr.Textbox.update(value=None),  # Update ID Textbox
-            gr.Textbox.update(value=None)
+            gr.Textbox.update(value=None), # Update model_filename Textbox
+            gr.Textbox.update(value=None), # Update ID Textbox
+            gr.Textbox.update(value=None), # sha256 textbox
+            gr.Button.update(interactive=False, visible=True), # Download Button
+            gr.Button.update(interactive=False, visible=False) # Delete Button
     )
 
 def request_civit_api(api_url=None):
