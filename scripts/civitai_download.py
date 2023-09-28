@@ -16,6 +16,11 @@ from modules.shared import opts
 import scripts.civitai_global as gl
 import scripts.civitai_api as _api
 import scripts.civitai_file_manage as _file
+try:
+    from zip_unicode import ZipHandler
+except:
+    print("Civit AI: Python module 'ZipUnicode' has not been imported correctly, please try to restart or install it manually.")
+
 
 gl.init()
 current_sha256 = None
@@ -222,7 +227,6 @@ def download_file(url, file_path, install_path, progress=gr.Progress()):
             if status_info['status'] == 'complete':
                 print(f"Model saved to: {file_path}")
                 progress(1, desc=f"Model saved to: {file_path}")
-                sha256_to_json(file_path)
                 time.sleep(2)
                 gl.download_fail = False
                 return
@@ -246,7 +250,6 @@ def download_file(url, file_path, install_path, progress=gr.Progress()):
             time.sleep(5)
 
 def sha256_to_json(install_path):
-    
     json_file = os.path.splitext(install_path)[0] + ".json"
     if os.path.exists(json_file):
         with open(json_file, 'r') as f:
@@ -262,7 +265,7 @@ def sha256_to_json(install_path):
         with open(json_file, 'w') as f:
             json.dump(data, f, indent=4)
 
-def download_file_old(url, file_path,progress=gr.Progress()):
+def download_file_old(url, file_path, progress=gr.Progress()):
     gl.download_fail = False
     max_retries = 5
     if os.path.exists(file_path):
@@ -351,7 +354,6 @@ def download_file_old(url, file_path,progress=gr.Progress()):
             if not gl.cancel_status:
                 print(f"Model saved to: {file_path}")
                 progress(1, desc=f"Model saved to: {file_path}")
-                sha256_to_json(file_path)
                 time.sleep(2)
                 gl.download_fail = False
                 return
@@ -369,10 +371,8 @@ def download_create_thread(download_finish, url, file_name, preview_html, create
 
     gr_components = _api.update_model_versions(model_name)
     gl.cancel_status = False
-    try:
-        use_aria2 = getattr(opts, "use_aria2", True)
-    except:
-        use_aria2 = True
+    use_aria2 = getattr(opts, "use_aria2", True)
+    unpack_zip = getattr(opts, "unpack_zip", False)
     name = model_name
     
     number = random_number(download_finish)
@@ -396,18 +396,31 @@ def download_create_thread(download_finish, url, file_name, preview_html, create
         thread.start()
         thread.join()
     
-    if not gl.cancel_status:
-        if create_json:
-            _file.save_json(file_name, install_path, trained_tags)
-        _file.save_preview(preview_html, path_to_new_file, install_path)
-    
+    if not gl.cancel_status or gl.download_fail:
+        if os.path.exists(path_to_new_file):
+            if unpack_zip:
+                try:
+                    if path_to_new_file.endswith('.zip'):
+                        directory = Path(os.path.dirname(path_to_new_file))
+                        zip_handler = ZipHandler(path_to_new_file)
+                        zip_handler.extract_all(directory)
+                        zip_handler.zip_ref.close()
+                        
+                        print(f"Successfully extracted {file_name} to {directory}")
+                        os.remove(path_to_new_file)
+                except Exception as e:
+                    print(f"Failed to extract {file_name} with error: {e}")
+            if create_json:
+                _file.save_json(file_name, install_path, trained_tags)
+            sha256_to_json(path_to_new_file)
+            _file.save_preview(preview_html, path_to_new_file, install_path)
+                
     base_name = os.path.splitext(file_name)[0]
     base_name_preview = base_name + '.preview'
 
     if gl.download_fail:
         if not gl.cancel_status:
             print(f'Error occured during download of "{path_to_new_file}".')
-        gl.download_fail = True
         for root, dirs, files in os.walk(install_path):
             for file in files:
                 file_base_name = os.path.splitext(file)[0]

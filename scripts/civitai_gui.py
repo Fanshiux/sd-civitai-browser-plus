@@ -84,7 +84,7 @@ def on_ui_tabs():
                     show_nsfw = gr.Checkbox(label="NSFW content", value=False, elem_id=toggle3)
             with gr.Row():
                 with gr.Column(scale=3,min_width=300):
-                    search_term = gr.Textbox(label="Search Term:", interactive=True, lines=1)
+                    search_term = gr.Textbox(label="Search Term (Ctrl+Enter/Alt+Enter or Refresh to search):", interactive=True, lines=1)
                 with gr.Column(scale=2,min_width=120):
                     use_search_term = gr.Radio(label="Search:", choices=["Model name", "User name", "Tag"],value="Model name")
                 with gr.Column(scale=1,min_width=160 ):
@@ -706,6 +706,7 @@ def on_ui_settings():
     shared.opts.add_option("split_aria2", shared.OptionInfo(64, "Number of connections to use for downloading a model", gr.Slider, lambda: {"maximum": "64", "minimum": "1", "step": "1"}, section=section).info("Only applies to Aria2"))
     shared.opts.add_option("insert_sub", shared.OptionInfo(True, "Insert [/Model Name] & [/Model Name/Version Name] as default sub folder options", section=section))
     shared.opts.add_option("use_LORA", shared.OptionInfo(False, "Use LORA directory for LoCon's", section=section).info("SD-WebUI v1.5 and higher treats LoCON's the same as LORA's, so they can be placed in the LORA folder."))
-
+    shared.opts.add_option("unpack_zip", shared.OptionInfo(False, "Automatically unpack .zip after downloading", section=section))
+    
 script_callbacks.on_ui_tabs(on_ui_tabs)
 script_callbacks.on_ui_settings(on_ui_settings)
