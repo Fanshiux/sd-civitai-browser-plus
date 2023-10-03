@@ -85,7 +85,9 @@ def download_start(download_start, model_name, model_filename, version, sha256, 
     gl.cancel_status = False
     gl.recent_model = model_name
     current_sha256 = sha256.upper()
-    current_id = modelId
+    for item in gl.json_data['items']:
+        if item['name'] == model_name:
+            current_id = item['id']
     number = random_number(download_start)
     return  (
             gr.Button.update(interactive=False, visible=False), # Download Button
