@@ -55,11 +55,26 @@ def delete_model(delete_finish, model_filename, model_name, list_versions, sha25
             for file in files:
                 if file.endswith('.json'):
                     file_path = os.path.join(root, file)
-                    with open(file_path, 'r') as json_file:
-                        data = json.load(json_file)
-                        file_sha256 = data.get('sha256', '').upper()
+                    try:
+                        with open(file_path, 'r') as json_file:
+                            data = json.load(json_file)
+                            file_sha256 = data.get('sha256', '').upper()
+                    except Exception as e:
+                        print(f"Failed to open: {file_path}: {e}")
+                        file_sha256 = "0"
                         
                     if file_sha256 == sha256_upper:
+                        unpack_list = data.get('unpackList', [])
+                        for unpacked_file in unpack_list:
+                            unpacked_file_path = os.path.join(root, unpacked_file)
+                            if os.path.isfile(unpacked_file_path):
+                                try:
+                                    send2trash(unpacked_file_path)
+                                    print(f"File moved to trash based on unpackList: {unpacked_file_path}")
+                                except:
+                                    os.remove(unpacked_file_path)
+                                    print(f"File deleted based on unpackList: {unpacked_file_path}")
+                        
                         base_name, _ = os.path.splitext(file)
                         if os.path.isfile(file_path):
                             try:
@@ -202,9 +217,12 @@ def save_json(file_name, install_path, trained_tags):
     path_to_new_file = os.path.join(install_path, file_name)
 
     if os.path.exists(path_to_new_file):
-        with open(path_to_new_file, 'r') as f:
-            content = json.load(f)
-        content["activation text"] = trained_tags
+        try:
+            with open(path_to_new_file, 'r') as f:
+                content = json.load(f)
+            content["activation text"] = trained_tags
+        except Exception as e:
+            print(f"Failed to open {path_to_new_file}: {e}")
     else:
         content = {"activation text": trained_tags}
 
@@ -258,12 +276,15 @@ def gen_sha256(file_path):
     json_file = os.path.splitext(file_path)[0] + ".json"
     
     if os.path.exists(json_file):
-        with open(json_file, 'r') as f:
-            data = json.load(f)
-    
-        if 'sha256' in data:
-            hash_value = data['sha256']
-            return hash_value
+        try:
+            with open(json_file, 'r') as f:
+                data = json.load(f)
+        
+            if 'sha256' in data:
+                hash_value = data['sha256']
+                return hash_value
+        except Exception as e:
+            print(f"Failed to open {json_file}: {e}")
         
     def read_chunks(file, size=io.DEFAULT_BUFFER_SIZE):
         while True:
@@ -283,14 +304,17 @@ def gen_sha256(file_path):
     hash_value = h.hexdigest()
     
     if os.path.exists(json_file):
-        with open(json_file, 'r') as f:
-            data = json.load(f)
- 
-        if 'sha256' not in data:
-            data['sha256'] = hash_value
-            
-        with open(json_file, 'w') as f:
-            json.dump(data, f, indent=4)
+        try:
+            with open(json_file, 'r') as f:
+                data = json.load(f)
+    
+            if 'sha256' not in data:
+                data['sha256'] = hash_value
+                
+            with open(json_file, 'w') as f:
+                json.dump(data, f, indent=4)
+        except Exception as e:
+            print(f"Failed to open {json_file}: {e}")
     else:
         data = {'sha256': hash_value}
         with open(json_file, 'w') as f:
@@ -326,7 +350,7 @@ def tags_save(api_response, file_paths):
                             with open(json_file, 'r') as f:
                                 try:
                                     content = json.load(f)
-                                except json.JSONDecodeError:
+                                except:
                                     content = {}
 
                             content["activation text"] = trained_tags
@@ -344,11 +368,14 @@ def get_models(file_path):
     json_file = os.path.splitext(file_path)[0] + ".json"
     
     if os.path.exists(json_file):
-        with open(json_file, 'r') as f:
-            data = json.load(f)
-            
-            if 'modelId' in data:
-                modelId = data['modelId']
+        try:
+            with open(json_file, 'r') as f:
+                data = json.load(f)
+                
+                if 'modelId' in data:
+                    modelId = data['modelId']
+        except Exception as e:
+            print(f"Failed to open {json_file}: {e}")
     
     if not modelId:
         model_hash = gen_sha256(file_path)
@@ -356,19 +383,22 @@ def get_models(file_path):
     
     try:
         if not modelId:
-            response = requests.get(by_hash, timeout=40)
+            response = requests.get(by_hash, timeout=(10,30))
             if response.status_code == 200:
                 data = response.json()
                 modelId = data.get("modelId", "")
                 if os.path.exists(json_file):
-                    with open(json_file, 'r') as f:
-                        data = json.load(f)
+                    try:
+                        with open(json_file, 'r') as f:
+                            data = json.load(f)
 
-                    if 'modelId' not in data:
-                        data['modelId'] = modelId
-                        
-                    with open(json_file, 'w') as f:
-                        json.dump(data, f, indent=4)
+                        if 'modelId' not in data:
+                            data['modelId'] = modelId
+                            
+                        with open(json_file, 'w') as f:
+                            json.dump(data, f, indent=4)
+                    except Exception as e:
+                        print(f"Failed to open {json_file}: {e}")
                 else:
                     data = {'modelId': modelId}
                     with open(json_file, 'w') as f:
@@ -388,10 +418,13 @@ def version_match(file_paths, api_response):
         json_path = f"{os.path.splitext(file_path)[0]}.json"
         if os.path.exists(json_path):
             with open(json_path, 'r') as f:
-                json_data = json.load(f)
-                sha256 = json_data.get('sha256')
-                if sha256:
-                    sha256_hashes[os.path.basename(file_path)] = sha256.upper()
+                try:
+                    json_data = json.load(f)
+                    sha256 = json_data.get('sha256')
+                    if sha256:
+                        sha256_hashes[os.path.basename(file_path)] = sha256.upper()
+                except Exception as e:
+                    print(f"Failed to open {json_path}: {e}")
     
     for item in api_response.get('items', []):
         model_versions = item.get('modelVersions', [])
@@ -414,10 +447,10 @@ def version_match(file_paths, api_response):
                     if entry_name == file_name_without_ext or entry_sha256 == file_sha256:
                         if idx == 0:
                             print(f"{file_name} is currently the latest version")
-                            updated_models.append(item)
+                            updated_models.append(f"&ids={item['id']}")
                         else:
                             print(f"{file_name} has an available update!")
-                            outdated_models.append(item)
+                            outdated_models.append(f"&ids={item['id']}")
                         break 
                 else:
                     continue
@@ -447,10 +480,14 @@ def file_scan(folders, ver_finish, tag_finish, installed_finish, progress=gr.Pro
     
     folders_to_check = []
     for item in folders:
-        upscaler = False
+        if item == "LORA & LoCon":
+            folder = _api.contenttype_folder("LORA")
+            if folder:
+                folders_to_check.append(folder)
+            folder = _api.contenttype_folder("LoCon", None, True)
+            if folder:
+                folders_to_check.append(folder)
         if item == "Upscaler":
-            upscaler = True
-        if upscaler:
             folder = _api.contenttype_folder(item, "ESRGAN")
             if folder:
                 folders_to_check.append(folder)
@@ -505,43 +542,48 @@ def file_scan(folders, ver_finish, tag_finish, installed_finish, progress=gr.Pro
     all_items = []
 
     all_model_ids = list(set(all_model_ids))
-    if from_installed:
-        base_url = urllib.parse.urljoin(getattr(opts, "civitai_base_url"), f"/api/v1/models?limit={gl.tile_count}")
-    else:
-        base_url = urllib.parse.urljoin(getattr(opts, "civitai_base_url"), "/api/v1/models?limit=100")
-    url = f"{base_url}{''.join(all_model_ids)}"
-    
+
+    def chunks(lst, n):
+        for i in range(0, len(lst), n):
+            yield lst[i:i + n]
+            
     if not from_installed:
-        while url:
-            progress(1, desc=f"Sending API request...")
-            response = requests.get(url)
-            if response.status_code == 200:
-                api_response = response.json()
+        model_chunks = list(chunks(all_model_ids, 500))
 
-                all_items.extend(api_response['items'])
+        base_url = urllib.parse.urljoin(getattr(opts, "civitai_base_url"), "/api/v1/models?limit=100")
+        url_list = [f"{base_url}{''.join(chunk)}" for chunk in model_chunks]
+        
+        for url in url_list:
+            while url:
+                progress(1, desc=f"Sending API request...")
+                response = requests.get(url, timeout=(10,30))
+                if response.status_code == 200:
+                    api_response = response.json()
 
-                metadata = api_response.get('metadata', {})
-                url = metadata.get('nextPage', None)
-            else:
-                print(f"Error: Received status code {response.status_code}")
-                break
+                    all_items.extend(api_response['items'])
+
+                    metadata = api_response.get('metadata', {})
+                    url = metadata.get('nextPage', None)
+                else:
+                    print(f"Error: Received status code {response.status_code} with URL:")
+                    print(url)
+                    break
 
         api_response['items'] = all_items
     
-    else:
-        progress(1, desc=f"Sending API request...")
-        response = requests.get(url)
-        if response.status_code == 200:
-            api_response = response.json()
-            
     if from_ver:
+        # return a list of outdated and updated models by ID
         updated_models, outdated_models = version_match(file_paths, api_response)
         
-        outdated_models = [model for model in outdated_models if model not in updated_models]
-        seen_ids = set()
-        outdated_models = [model for model in outdated_models if model.get("id") not in seen_ids and not seen_ids.add(model.get("id"))]
+        # Convert the lists to sets
+        updated_set = set(updated_models)
+        outdated_set = set(outdated_models)
+
+        # Remove IDs from outdated_models that are in updated_models
+        outdated_set = outdated_set - updated_set
+        all_model_ids = list(outdated_set)
         
-        if len(outdated_models) == 0:
+        if len(all_model_ids) == 0:
             no_update = True
             gl.scan_files = False
             from_ver = False
@@ -549,10 +591,26 @@ def file_scan(folders, ver_finish, tag_finish, installed_finish, progress=gr.Pro
                     gr.HTML.update(value='<div style="font-size: 24px; text-align: center; margin: 50px !important;">No updates found for selected models.</div>'),
                     gr.Textbox.update(value=number)
                 )
+    
+    model_chunks = list(chunks(all_model_ids, gl.tile_count))
+
+    base_url = urllib.parse.urljoin(getattr(opts, "civitai_base_url"), "/api/v1/models?limit=100")
+    gl.url_list_with_numbers = {i+1: f"{base_url}{''.join(chunk)}" for i, chunk in enumerate(model_chunks)}
+
+    api_url = gl.url_list_with_numbers.get(1)
+    response = requests.get(api_url, timeout=(10,30))
+    if response.status_code == 200:
+        response.encoding = "utf-8"
+        gl.ver_json = json.loads(response.text)
         
-        models_list = {'items': outdated_models}
-        combined_json = json.dumps(models_list)
-        gl.ver_json = json.loads(combined_json)
+        # Modify the metadata
+        highest_number = max(gl.url_list_with_numbers.keys())
+        gl.ver_json["metadata"]["totalPages"] = highest_number
+        
+        if highest_number > 1:
+            gl.ver_json["metadata"]["nextPage"] = gl.url_list_with_numbers.get(2)
+    
+    if from_ver:
         gl.scan_files = False
         return  (
                 gr.HTML.update(value='<div style="font-size: 24px; text-align: center; margin: 50px !important;">Outdated models have been found.<br>Please press the button above to load the models into the browser tab</div>'),
@@ -560,8 +618,6 @@ def file_scan(folders, ver_finish, tag_finish, installed_finish, progress=gr.Pro
             )
 
     if from_installed:
-        combined_json = json.dumps(api_response)
-        gl.ver_json = json.loads(combined_json)
         gl.scan_files = False
         return  (
                 gr.HTML.update(value='<div style="font-size: 24px; text-align: center; margin: 50px !important;">Installed models have been loaded.<br>Please press the button above to load the models into the browser tab</div>'),
@@ -578,13 +634,15 @@ def file_scan(folders, ver_finish, tag_finish, installed_finish, progress=gr.Pro
             )
 
 def save_tag_start(tag_start):
-    global from_tag
-    from_tag = True
+    global from_tag, from_ver, from_installed
+    from_tag, from_ver, from_installed = True, False, False
     number = _download.random_number(tag_start)
     return (
         gr.Textbox.update(value=number),
         gr.Button.update(interactive=False, visible=False),
         gr.Button.update(interactive=True, visible=True),
+        gr.Button.update(interactive=False, visible=True),
+        gr.Button.update(interactive=False, visible=True),
         gr.HTML.update(value='<div style="min-height: 100px;"></div>')
     )
 
@@ -593,57 +651,71 @@ def save_tag_finish():
     from_tag = False
     return (
         gr.Button.update(interactive=True, visible=True),
+        gr.Button.update(interactive=True, visible=True),
+        gr.Button.update(interactive=True, visible=True),
         gr.Button.update(interactive=False, visible=False)
     )
     
 def start_ver_search(ver_start):
-    global from_ver
-    from_ver = True
+    global from_ver, from_tag, from_installed
+    from_ver, from_tag, from_installed = True, False, False
     number = _download.random_number(ver_start)
     return (
         gr.Textbox.update(value=number),
         gr.Button.update(interactive=False, visible=False),
         gr.Button.update(interactive=True, visible=True),
+        gr.Button.update(interactive=False, visible=True),
+        gr.Button.update(interactive=False, visible=True),
         gr.HTML.update(value='<div style="min-height: 100px;"></div>')
     )
 
 def finish_ver_search():
     return (
         gr.Button.update(interactive=True if no_update else False, visible=True if no_update else False),
+        gr.Button.update(interactive=True if no_update else False, visible=True if no_update else False),
+        gr.Button.update(interactive=True if no_update else False, visible=True if no_update else False),
         gr.Button.update(interactive=False, visible=False),
         gr.Button.update(interactive=False if no_update else True, visible=False if no_update else True),
+        
     )
 
 def load_to_browser():
     global from_ver, from_installed
     _ = None
     if from_ver:
-        (lm,lv,lh,pp,np,p,st,si,dm,ip,sf,fl,bt) = _api.update_model_list(_,_,_,_,_,_,_,_,True)
+        (lm,lv,lh,pp,np,p,st,si,dm,ip,sf,fl,bt) = _api.update_model_list(_,_,_,_,_,_,_,_,_,True)
     if from_installed:
-        (lm,lv,lh,pp,np,p,st,si,dm,ip,sf,fl,bt) = _api.update_model_list(_,_,_,_,_,_,_,_,False,True)
-        
+        (lm,lv,lh,pp,np,p,st,si,dm,ip,sf,fl,bt) = _api.update_model_list(_,_,_,_,_,_,_,_,_,False,True)
+    
+    gl.file_scan = True
     from_ver, from_installed = False, False
     return (
+        gr.Button.update(interactive=True, visible=True),
+        gr.Button.update(interactive=True, visible=True),
         gr.Button.update(interactive=True, visible=True),
         gr.Button.update(interactive=False, visible=False),
         gr.Button.update(interactive=False, visible=False),
         lm,lv,lh,pp,np,p,st,si,dm,ip,sf,fl,bt,
-        gr.HTML.update(value='<div style="font-size: 24px; text-align: center; margin: 50px !important;">Models loaded into the browser!</div>')
+        gr.HTML.update(value='<div style="min-height: 0px;"></div>')
     )
     
 def start_installed_models(installed_start):
-    global from_installed
-    from_installed = True
+    global from_installed, from_ver, from_tag
+    from_installed, from_ver, from_tag = True, False, False
     number = _download.random_number(installed_start)
     return (
         gr.Textbox.update(value=number),
         gr.Button.update(interactive=False, visible=False),
         gr.Button.update(interactive=True, visible=True),
+        gr.Button.update(interactive=False, visible=True),
+        gr.Button.update(interactive=False, visible=True),
         gr.HTML.update(value='<div style="min-height: 100px;"></div>')
     )
     
 def finish_installed_models():
     return (
+        gr.Button.update(interactive=True if no_update else False, visible=True if no_update else False),
+        gr.Button.update(interactive=True if no_update else False, visible=True if no_update else False),
         gr.Button.update(interactive=True if no_update else False, visible=True if no_update else False),
         gr.Button.update(interactive=False, visible=False),
         gr.Button.update(interactive=False if no_update else True, visible=False if no_update else True),

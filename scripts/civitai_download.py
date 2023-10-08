@@ -57,13 +57,13 @@ aria2path = Path(__file__).resolve().parents[1] / "aria2"
 os_type = platform.system()
 
 if os_type == 'Windows':
-    aria2 = os.path.join(aria2path, 'win', 'aria2c.exe')
+    aria2 = os.path.join(aria2path, 'win', 'aria2.exe')
 elif os_type == 'Linux':
-    aria2 = os.path.join(aria2path, 'lin', 'aria2c')
+    aria2 = os.path.join(aria2path, 'lin', 'aria2')
     st = os.stat(aria2)
     os.chmod(aria2, st.st_mode | stat.S_IEXEC)
 elif os_type == 'Darwin':
-    aria2 = os.path.join(aria2path, 'mac', 'aria2c')
+    aria2 = os.path.join(aria2path, 'mac', 'aria2')
 
 start_aria2_rpc(aria2)
 
@@ -98,8 +98,10 @@ def download_start(download_start, model_name, model_filename, version, sha256, 
 
 def download_finish(model_filename, version, model_name):
     gr_components = _api.update_model_versions(model_name)
-    version_choices = gr_components['choices']
-    
+    if gr_components:
+        version_choices = gr_components[0]['choices']
+    else:
+        version_choices = []
     prev_version = gl.last_version + " [Installed]"
     
     if prev_version in version_choices:
@@ -120,7 +122,6 @@ def download_finish(model_filename, version, model_name):
             gr.Button.update(interactive=Del, visible=Del), # Delete Button
             gr.HTML.update(value='<div style="min-height: 0px;"></div>'), # Download Progress
             gr.Dropdown.update(value=version, choices=version_choices)
-            
     )
 
 def download_cancel(delete_finish, model_name, list_versions, model_filename, sha256):
@@ -251,21 +252,24 @@ def download_file(url, file_path, install_path, progress=gr.Progress()):
                 return
             time.sleep(5)
 
-def sha256_to_json(install_path):
+def info_to_json(install_path, unpackList=None):
     json_file = os.path.splitext(install_path)[0] + ".json"
     if os.path.exists(json_file):
-        with open(json_file, 'r') as f:
-            data = json.load(f)
-
-            data['modelId'] = current_id
-            data['sha256'] = current_sha256
-            
-        with open(json_file, 'w') as f:
-            json.dump(data, f, indent=4)
+        try:
+            with open(json_file, 'r') as f:
+                data = json.load(f)
+        except Exception as e:
+            print(f"Failed to open {json_file}: {e}")
     else:
-        data = {'sha256': current_sha256, 'modelId': current_id}
-        with open(json_file, 'w') as f:
-            json.dump(data, f, indent=4)
+        data = {}
+
+    data['modelId'] = current_id
+    data['sha256'] = current_sha256
+    if unpackList:
+        data['unpackList'] = unpackList
+
+    with open(json_file, 'w') as f:
+        json.dump(data, f, indent=4)
 
 def download_file_old(url, file_path, progress=gr.Progress()):
     gl.download_fail = False
@@ -391,20 +395,23 @@ def download_create_thread(download_finish, url, file_name, preview_html, create
     
     if use_aria2:
         thread = threading.Thread(target=download_file, args=(url, path_to_new_file, install_path, progress))
-        thread.start()
-        thread.join()
     else:
         thread = threading.Thread(target=download_file_old, args=(url, path_to_new_file, progress))
-        thread.start()
-        thread.join()
+    thread.start()
+    thread.join()
     
     if not gl.cancel_status or gl.download_fail:
         if os.path.exists(path_to_new_file):
+            unpackList = []
             if unpack_zip:
                 try:
                     if path_to_new_file.endswith('.zip'):
                         directory = Path(os.path.dirname(path_to_new_file))
                         zip_handler = ZipHandler(path_to_new_file)
+                        
+                        for original_name, decoded_name in zip_handler.name_map.items():
+                            unpackList.append(decoded_name)
+                        
                         zip_handler.extract_all(directory)
                         zip_handler.zip_ref.close()
                         
@@ -414,8 +421,9 @@ def download_create_thread(download_finish, url, file_name, preview_html, create
                     print(f"Failed to extract {file_name} with error: {e}")
             if create_json:
                 _file.save_json(file_name, install_path, trained_tags)
-            sha256_to_json(path_to_new_file)
+            info_to_json(path_to_new_file, unpackList)
             _file.save_preview(preview_html, path_to_new_file, install_path)
+
                 
     base_name = os.path.splitext(file_name)[0]
     base_name_preview = base_name + '.preview'

@@ -2,14 +2,8 @@
 ![CivitAI Browser-05+](https://github.com/BlafKing/sd-civitai-browser-plus/assets/9644716/95afcc41-56f0-4398-8779-51cb2a9e2f55)
 
 ---
-Extension for [Automatic1111's Stable Difussion Web UI](https://github.com/AUTOMATIC1111/stable-diffusion-webui)  
+### Extension for [Automatic1111's Stable Difussion Web UI](https://github.com/AUTOMATIC1111/stable-diffusion-webui)
 
-This extension allows you to download models from CivitAi without leaving WebUI!  
-
-This modified extension is based on [v1.1.0](https://github.com/SignalFlagZ/sd-civitai-browser/releases/tag/1.1.0) from [SignalFlagZ's Fork](https://github.com/SignalFlagZ/sd-civitai-browser)  
-
-
-**NOTE: Search results are currently not impacted by the selected Base Model since the CivitAI API does not yet support this feature. If you'd like to have this feature, please upvote my feature request [here](https://civitai.featurebase.app/submissions/64ea19ac4f9cf39e6f9fb2e9) and [here](https://github.com/orgs/civitai/discussions/733)**
 
 <h1>Features 🚀</h1>
 <h3>Browse all models from CivitAI 🧩</h3>
@@ -33,6 +27,10 @@ This modified extension is based on [v1.1.0](https://github.com/SignalFlagZ/sd-c
 
 * Maximize your bandwidth for lightning-fast downloads.
 
+<h3>Sleek and Intuitive User Interface 🖌️</h3>
+
+* Enjoy a clutter-free, user-friendly interface, designed to enhance your experience.
+
 <h3>Actively maintained with feature requests welcome 🛠️</h3>
 
 * Feel free to send me your feature requests, and I'll do my best to implement them!
@@ -47,16 +45,16 @@ This modified extension is based on [v1.1.0](https://github.com/SignalFlagZ/sd-c
 
 **If you're experiencing issues with broken or frozen downloads, there are two possible solutions you can try:**
 
-1. **Disable Async DNS for Aria2**:
-   If you're using any DNS manager program like PortMaster, try turning on the "Disable Async DNS for Aria2" option.
-
-   ![Disable Async DNS for Aria2](https://github.com/BlafKing/sd-civitai-browser-plus/assets/9644716/3cf7fab3-0df5-4995-9543-d9824b7931ff)
-
-2. **Revert to the old download method**:
-   Another solution could be to disable the "Download models using Aria2" feature.  
+1. **Revert to the old download method**:
+   A solution could be to disable the "Download models using Aria2" feature.  
 This will switch back to the old download method, which may resolve the issue.
 
    ![Revert to old download method](https://github.com/BlafKing/sd-civitai-browser-plus/assets/9644716/982b0ebb-0cac-4053-8060-285533e0e176)
+
+2. **Disable Async DNS for Aria2**:
+   If you're using any DNS manager program like PortMaster, try turning on the "Disable Async DNS for Aria2" option.
+
+   ![Disable Async DNS for Aria2](https://github.com/BlafKing/sd-civitai-browser-plus/assets/9644716/3cf7fab3-0df5-4995-9543-d9824b7931ff)
 
 These settings can be found under the "Settings" tab in Web-UI and then under the "Civit AI" tile.
 
@@ -91,6 +89,48 @@ https://github.com/BlafKing/sd-civitai-browser/assets/9644716/ea873c3e-a7e4-44a8
 
 # Changelog 📋
 
+<h3>v1.14.5</h3>
+
+* Feature: Base Model filter now impacts search results.
+* Feature: Ability to input model URL into search bar to find corresponding model.
+* Bug fix: Adetailer models now get placed in the correct folder
+
+---
+<h3>v1.14.4</h3>
+
+* Bug fix: Page slider broke the Next Page button when loaded from "Update Models".
+* Bug fix: "Save settings as default" button inserted broken .json data.
+* Bug fix: Triggering "Scan for available updates" twice resulted in an error.
+
+---
+<h3>v1.14.3</h3>
+
+* Bug fix: LORA content type was broken when "Treat LoCon as LORA" was turned on.
+
+---
+<h3>v1.14.2</h3>
+
+* Feature: Custom page handling when scanning models.
+* Bug fix: Model scan feature now works for large model count (+900)
+* Bug fix: Better broken .json error handling
+
+---
+<h3>v1.14.1</h3>
+
+* Bug fix: Gifs did not display properly.
+* Bug fix: Video's no longer save as preview since they cannot be used.
+* Bug fix: Filter window was not hidden by default.
+
+---
+<h3>v1.14</h3>
+
+* Feature: Redesign of UI.
+* Feature: New dropdown with filter settings.
+* Feature: Button to save current filter settings as default. (requires restart)
+* Feature: Tag box can now be typed in to save custom tags.
+* Feature: Delete function removes any unpacked files.
+
+---
 <h3>v1.13</h3>
 
 * Feature: Updated available content types: 
@@ -346,3 +386,4 @@ https://github.com/BlafKing/sd-civitai-browser/assets/9644716/ea873c3e-a7e4-44a8
 * Feature: Ability to manually fill in a page number to load the corresponding page.
 * Cleanup: Removed new folder option.
 * Cleanup: Made the glow around frames always visible without hovering.
+* Pulled fork from: [SignalFlagZ's Fork](https://github.com/SignalFlagZ/sd-civitai-browser) [v1.1.0](https://github.com/SignalFlagZ/sd-civitai-browser/releases/tag/1.1.0)

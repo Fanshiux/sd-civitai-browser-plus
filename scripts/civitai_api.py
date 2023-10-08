@@ -1,20 +1,17 @@
 import requests
 import json
 import gradio as gr
-import subprocess
 import urllib.request
 import urllib.parse
 import urllib.error
 import os
 import re
 from collections import defaultdict
-from packaging import version
 from modules.shared import cmd_opts, opts
 from modules.paths import models_path, extensions_dir
 from html import escape 
 import scripts.civitai_global as gl
 import scripts.civitai_download as _download
-import time
 
 gl.init()
 
@@ -47,14 +44,15 @@ def update_dl_url(trained_tags, model_id=None, model_name=None, model_version=No
                 gr.Button.update(interactive=True if model_version else False) # Download Button
         )
 
-def contenttype_folder(content_type, desc=None):
+def contenttype_folder(content_type, desc=None, fromCheck=False):
+    use_LORA = getattr(opts, "use_LORA", False)
     folder = None
     if desc:
         desc = desc.upper()
-    use_LORA = getattr(opts, "use_LORA", False)
+        
     if content_type == "modelFolder":
         folder = os.path.join(models_path)
-    
+        
     if content_type == "Checkpoint":
         if cmd_opts.ckpt_dir:
             folder = cmd_opts.ckpt_dir
@@ -79,8 +77,8 @@ def contenttype_folder(content_type, desc=None):
         elif "lyco_dir_backcompat" in cmd_opts:
             folder = f"{cmd_opts.lyco_dir_backcompat}"
         else:
-            folder = os.path.join(models_path,"LyCORIS")    
-        if use_LORA:
+            folder = os.path.join(models_path,"LyCORIS")
+        if use_LORA and not fromCheck:
             folder = cmd_opts.lora_dir
             
     elif content_type == "VAE":
@@ -118,7 +116,10 @@ def contenttype_folder(content_type, desc=None):
         folder = os.path.join(models_path,"Workflows")
         
     elif content_type == "Other":
-        folder = os.path.join(models_path,"Other")
+        if "ADETAILER" in desc:
+            folder = os.path.join(models_path,"adetailer")
+        else:
+            folder = os.path.join(models_path,"Other")
     
     elif content_type == "Wildcards":
         folder = os.path.join(extensions_dir, "UnivAICharGen", "wildcards")
@@ -127,31 +128,32 @@ def contenttype_folder(content_type, desc=None):
     
     return folder
 
-def api_to_data(content_type, sort_type, period_type, use_search_term, page_count, search_term=None, timeOut=None, isNext=None):
-    
-    if page_count in ("0", ""):
-        page_count = "1"
-    
-    page_value = page_count.split('/')[0]
+def api_to_data(content_type, sort_type, period_type, use_search_term, current_page, base_filter, search_term=None, timeOut=None, isNext=None):
+    if current_page in [0, None, ""]:
+        current_page = 1
     civitai_base_url = getattr(opts, "civitai_base_url")
     if search_term != gl.previous_search_term or gl.tile_count != gl.previous_tile_count or gl.inputs_changed or gl.contentChange:
         gl.previous_search_term = search_term
         gl.previous_tile_count = gl.tile_count
+        gl.file_scan = False
         api_url = urllib.parse.urljoin(civitai_base_url, f"/api/v1/models?limit={gl.tile_count}&page=1")
     else:
         api_url = urllib.parse.urljoin(civitai_base_url, f"/api/v1/models?limit={gl.tile_count}&page={page_value}")
     
     if timeOut:
         if isNext:
-            next_page = str(int(page_value) + 1)
+            next_page = str(int(current_page) + 1)
         else:
-            next_page = str(int(page_value) - 1)
+            if current_page not in [1, 0, None, ""]:
+                next_page = str(int(current_page) - 1)
         api_url = urllib.parse.urljoin(civitai_base_url, f"/api/v1/models?limit={gl.tile_count}&page={next_page}")
     
-    period_type = period_type.replace(" ", "")
+    if period_type:
+        period_type = period_type.replace(" ", "")
     query = {'sort': sort_type, 'period': period_type}
     
     types_query_str = ""
+    
     if content_type:
         types_query_str = "".join([f"&types={type}" for type in content_type])
     
@@ -161,24 +163,40 @@ def api_to_data(content_type, sort_type, period_type, use_search_term, page_coun
         query_str += types_query_str
 
     if use_search_term != "None" and search_term:
-        if use_search_term == "User name":
+        search_term = search_term.replace("\\","\\\\")
+        if "civitai.com" in search_term:
+            match = re.search(r'models/(\d+)', search_term)
+            model_number = match.group(1)
+            query_str = f"&ids={urllib.parse.quote(model_number)}"
+        elif use_search_term == "User name":
             query_str += f"&username={urllib.parse.quote(search_term)}"
         elif use_search_term == "Tag":
             query_str += f"&tag={urllib.parse.quote(search_term)}"
         else:
             query_str += f"&query={urllib.parse.quote(search_term)}"
+            
+    if base_filter:
+        for base in base_filter:
+            query_str += f"&baseModels={urllib.parse.quote(base)}"
     
     full_url = f"{api_url}&{query_str}"
-
-    return request_civit_api(full_url)
-
-def api_next_page(next_page_url=None):
-    if next_page_url is None:
-        try: gl.json_data['metadata']['nextPage']
-        except: return
-        next_page_url = gl.json_data['metadata']['nextPage']
-        next_page_url = re.sub(r'limit=\d+', f'limit={gl.tile_count}', next_page_url)
-    return request_civit_api(next_page_url)
+    
+    if gl.file_scan:
+        highest_number = max(gl.url_list_with_numbers.keys())
+        full_url = gl.url_list_with_numbers.get(int(current_page))
+        nextPage = int(current_page) + 1
+        prevPage = int(current_page) - 1
+        data = request_civit_api(full_url)
+        data["metadata"]["currentPage"] = current_page
+        data["metadata"]["totalPages"] = highest_number
+        if not nextPage > highest_number:
+            data["metadata"]["nextPage"] = gl.url_list_with_numbers.get(nextPage)
+        if not prevPage == 0:
+            data["metadata"]["prevPage"] = gl.url_list_with_numbers.get(prevPage)
+    else:
+        data = request_civit_api(full_url)
+        
+    return data
 
 def model_list_html(json_data, model_dict):
     gl.contentChange = False
@@ -188,14 +206,13 @@ def model_list_html(json_data, model_dict):
     for item in json_data['items']:
         for k, model in model_dict.items():
             if model_dict[k].lower() == item['name'].lower():
-                model_name = escape(item["name"].replace("'", "\\'"), quote=True)
+                model_name = escape(item["name"].replace("'", "\\'"), quote=True).replace("\\", "\\\\")
                 
                 if model_name:
                     selected_content_type = item['type']
                     desc = item['description']
                         
                 if not selected_content_type:
-                    print("Model name not found in json_data. (model_list_html)")
                     return
                 
                 nsfw = ""
@@ -222,10 +239,12 @@ def model_list_html(json_data, model_dict):
                         if item["modelVersions"][0]["images"][0]['nsfw'] not in ["None", "Soft"]:
                             nsfw = "civcardnsfw"
                         media_type = item["modelVersions"][0]["images"][0]["type"]
+                        image = item["modelVersions"][0]["images"][0]["url"]
                         if media_type == "video":
-                            imgtag = f'<video class="video-bg" autoplay loop muted playsinline><source src="{item["modelVersions"][0]["images"][0]["url"]}" type="video/mp4"></video>'
+                            image = image.replace("width=", "transcode=true,width=")
+                            imgtag = f'<video class="video-bg" autoplay loop muted playsinline><source src="{image}" type="video/mp4"></video>'
                         else:
-                            imgtag = f'<img src="{item["modelVersions"][0]["images"][0]["url"]}"></img>'
+                            imgtag = f'<img src="{image}"></img>'
                     else:
                         imgtag = f'<img src="./file=html/card-no-preview.png"></img>'
 
@@ -247,8 +266,8 @@ def model_list_html(json_data, model_dict):
                                                 existing_files_sha256.append(sha256.upper())
                                         else:
                                             print(f"Invalid JSON data in {json_path}. Expected a dictionary.")
-                                    except json.JSONDecodeError as e:
-                                        print(f"Error decoding JSON in {json_path}: {str(e)}")
+                                    except Exception as e:
+                                        print(f"Error decoding JSON in {json_path}: {e}")
                     
                     installstatus = None
                     
@@ -284,22 +303,30 @@ def model_list_html(json_data, model_dict):
     HTML += '</div>'
     return HTML
 
-def update_prev_page(content_type, sort_type, period_type, use_search_term, search_term, page_count):
-    return update_next_page(content_type, sort_type, period_type, use_search_term, search_term, page_count, isNext=False)
+def update_prev_page(content_type, sort_type, period_type, use_search_term, search_term, current_page, base_filter):
+    return update_next_page(content_type, sort_type, period_type, use_search_term, search_term, current_page, base_filter, isNext=False)
 
-def update_next_page(content_type, sort_type, period_type, use_search_term, search_term, page_count, isNext=True):
+def update_next_page(content_type, sort_type, period_type, use_search_term, search_term, current_page, base_filter, isNext=True):
+    use_LORA = getattr(opts, "use_LORA", False)
     
+    if content_type:
+        if use_LORA and 'LORA & LoCon' in content_type:
+            content_type.remove('LORA & LoCon')
+            if 'LORA' not in content_type:
+                content_type.append('LORA')
+            if 'LoCon' not in content_type:
+                content_type.append('LoCon')
+            
     if gl.json_data is None or gl.json_data == "timeout":
         timeOut = True
-        return_values = update_model_list(content_type, sort_type, period_type, use_search_term, search_term, page_count, timeOut, isNext)
+        return_values = update_model_list(content_type, sort_type, period_type, use_search_term, search_term, current_page, base_filter, timeOut, isNext)
         timeOut = False
         
         return return_values
         
     gl.pageChange = True
     
-    current_inputs = (content_type, sort_type, period_type, use_search_term, search_term, gl.tile_count)
-    
+    current_inputs = (content_type, sort_type, period_type, use_search_term, search_term, gl.tile_count, base_filter)
     if gl.previous_inputs and current_inputs != gl.previous_inputs:
         gl.inputs_changed = True
     else:
@@ -308,31 +335,67 @@ def update_next_page(content_type, sort_type, period_type, use_search_term, sear
     
     gl.previous_inputs = current_inputs
 
-    if gl.inputs_changed or gl.contentChange:
-        return_values = update_model_list(content_type, sort_type, period_type, use_search_term, search_term, page_count)
-        return return_values
+    if not gl.file_scan:
+        if gl.inputs_changed or gl.contentChange:
+            return_values = update_model_list(content_type, sort_type, period_type, use_search_term, search_term, current_page, base_filter)
+            return return_values
     
-    if isNext:
-        gl.json_data = api_next_page()
-    else:
-        if gl.json_data['metadata']['prevPage'] is not None:
-            gl.json_data = api_next_page(gl.json_data['metadata']['prevPage'])
+        if isNext:
+            if gl.json_data['metadata']['nextPage'] is not None:
+                gl.json_data = request_civit_api(gl.json_data['metadata']['nextPage'])
+            else:
+                gl.json_data = None
         else:
-            gl.json_data = None
-            
+            if gl.json_data['metadata']['prevPage'] is not None:
+                gl.json_data = request_civit_api(gl.json_data['metadata']['prevPage'])
+            else:
+                gl.json_data = None
+    else:
+        highest_number = max(gl.url_list_with_numbers.keys())
+        if isNext:
+            if gl.json_data['metadata']['nextPage'] is not None:
+                currentPage = int(gl.json_data['metadata']['currentPage'])
+                nextPage = currentPage + 2
+                prevPage = currentPage
+                pageCount = currentPage + 1
+                gl.json_data = request_civit_api(gl.json_data['metadata']['nextPage'])
+                
+                gl.json_data["metadata"]["totalPages"] = highest_number
+                if not nextPage > highest_number:
+                    gl.json_data["metadata"]["nextPage"] = gl.url_list_with_numbers.get(nextPage)
+                if not prevPage == 0:
+                    gl.json_data["metadata"]["prevPage"] = gl.url_list_with_numbers.get(prevPage)
+                gl.json_data["metadata"]["currentPage"] = pageCount
+            else:
+                gl.json_data = None
+        else:
+            if gl.json_data['metadata']['prevPage'] is not None:
+                currentPage = int(gl.json_data['metadata']['currentPage'])
+                nextPage = currentPage
+                prevPage = currentPage - 2
+                pageCount = currentPage -1
+                gl.json_data = request_civit_api(gl.json_data['metadata']['prevPage'])
+                
+                gl.json_data["metadata"]["totalPages"] = highest_number
+                if not nextPage > highest_number:
+                    gl.json_data["metadata"]["nextPage"] = gl.url_list_with_numbers.get(nextPage)
+                if not prevPage == 0:
+                    gl.json_data["metadata"]["prevPage"] = gl.url_list_with_numbers.get(prevPage)
+                gl.json_data["metadata"]["currentPage"] = pageCount
+            else:
+                gl.json_data = None
+                
     if gl.json_data is None:
         return
     
     if gl.json_data == "timeout":
         HTML = '<div style="font-size: 24px; text-align: center; margin: 50px !important;">The Civit-API has timed out, please try again.<br>The servers might be too busy or down if the issue persists.</div>'
-        page_value = page_count.split('/')[0]
-        hasPrev = page_value not in [0, 1]
-        hasNext = page_value == 1 or hasPrev
+        hasPrev = current_page not in [0, 1]
+        hasNext = current_page == 1 or hasPrev
         model_dict = {}
-        pages=page_count
         
     if gl.json_data != None and gl.json_data != "timeout":
-        (hasPrev, hasNext, pages) = pagecontrol(gl.json_data)
+        (hasPrev, hasNext, current_page, total_pages) = pagecontrol(gl.json_data)
         model_dict = {}
         try:
             gl.json_data['items']
@@ -343,37 +406,51 @@ def update_next_page(content_type, sort_type, period_type, use_search_term, sear
             model_dict[item['name']] = item['name']
         HTML = model_list_html(gl.json_data, model_dict)
 
+    page_string = f"Page: {current_page}/{total_pages}"
+    
     return  (
-            gr.Dropdown.update(choices=[v for k, v in model_dict.items()], value=""), # Model List
+            gr.Dropdown.update(choices=[v for k, v in model_dict.items()], value="", interactive=True), # Model List
             gr.Dropdown.update(choices=[], value=""), # Version List
-            gr.HTML.update(value=HTML), # Model Cards HTML
-            gr.Button.update(interactive=hasPrev), # Prev Button
-            gr.Button.update(interactive=hasNext), # Next Button
-            gr.Textbox.update(value=pages), # Pages
-            gr.Button.update(interactive=False), # Save Tags Button
-            gr.Button.update(interactive=False), # Save Images Button
+            gr.HTML.update(value=HTML), # HTML Tiles
+            gr.Button.update(interactive=hasPrev), # Prev Page Button
+            gr.Button.update(interactive=hasNext), # Next Page Button
+            gr.Slider.update(value=current_page, maximum=total_pages, label=page_string), # Page Count
+            gr.Button.update(interactive=False), # Save Tags
+            gr.Button.update(interactive=False), # Save Images
             gr.Button.update(interactive=False), # Download Button
             gr.Textbox.update(interactive=False, value=None), # Install Path
-            gr.Dropdown.update(choices=[], value=""), # Sub Folder List
+            gr.Dropdown.update(choices=[], value="", interactive=False), # Sub Folder List
+            gr.Dropdown.update(choices=[], value="", interactive=False), # File List
             gr.Button.update(visible=False)
     )
 
 def pagecontrol(json_data):
-    pages_ctrl = f"{json_data['metadata']['currentPage']}/{json_data['metadata']['totalPages']}"
+    current_page = f"{json_data['metadata']['currentPage']}"
+    total_pages = f"{json_data['metadata']['totalPages']}"
     hasNext = False
     hasPrev = False
     if 'nextPage' in json_data['metadata']:
         hasNext = True
     if 'prevPage' in json_data['metadata']:
         hasPrev = True
-    return hasPrev, hasNext, pages_ctrl
+    return hasPrev, hasNext, current_page, total_pages
 
-def update_model_list(content_type, sort_type, period_type, use_search_term, search_term, page_count, timeOut=None, isNext=None, from_ver=False, from_installed=False):
+def update_model_list(content_type, sort_type, period_type, use_search_term, search_term, current_page, base_filter, timeOut=None, isNext=None, from_ver=False, from_installed=False):
+    use_LORA = getattr(opts, "use_LORA", False)
+    
+    if content_type:
+        if use_LORA and 'LORA & LoCon' in content_type:
+            content_type.remove('LORA & LoCon')
+            if 'LORA' not in content_type:
+                content_type.append('LORA')
+            if 'LoCon' not in content_type:
+                content_type.append('LoCon')
+            
     if not from_ver and not from_installed:
         gl.ver_json = None
-        if not gl.pageChange:
+        if not gl.pageChange and not gl.file_scan:
         
-            current_inputs = (content_type, sort_type, period_type, use_search_term, search_term, gl.tile_count)
+            current_inputs = (content_type, sort_type, period_type, use_search_term, search_term, gl.tile_count, base_filter)
             
             if gl.previous_inputs and current_inputs != gl.previous_inputs:
                 gl.inputs_changed = True
@@ -382,14 +459,12 @@ def update_model_list(content_type, sort_type, period_type, use_search_term, sea
             
             gl.previous_inputs = current_inputs
         
-        gl.json_data = api_to_data(content_type, sort_type, period_type, use_search_term, page_count, search_term, timeOut, isNext)
+        gl.json_data = api_to_data(content_type, sort_type, period_type, use_search_term, current_page, base_filter, search_term, timeOut, isNext)
         if gl.json_data == "timeout":
             HTML = '<div style="font-size: 24px; text-align: center; margin: 50px !important;">The Civit-API has timed out, please try again.<br>The servers might be too busy or down if the issue persists.</div>'
-            page_value = page_count.split('/')[0]
-            hasPrev = page_value not in [0, 1]
-            hasNext = page_value == 1 or hasPrev
+            hasPrev = current_page not in [0, 1]
+            hasNext = current_page == 1 or hasPrev
             model_dict = {}
-            pages=page_count
         
         if gl.json_data is None:
             return
@@ -397,34 +472,29 @@ def update_model_list(content_type, sort_type, period_type, use_search_term, sea
         if gl.pageChange:
             gl.pageChange = False
         
-        if gl.json_data != None and gl.json_data != "timeout":
-            (hasPrev, hasNext, pages) = pagecontrol(gl.json_data)
-            model_dict = {}
-            for item in gl.json_data['items']:
-                model_dict[item['name']] = item['name']
-            
-            HTML = model_list_html(gl.json_data, model_dict)
-        
         gl.contentChange = False
     
-    if from_ver:
-        hasPrev = False
-        hasNext = False
-        pages = ""
-        model_dict = {}
-        for item in gl.ver_json['items']:
-            model_dict[item['name']] = item['name']
-        HTML = model_list_html(gl.ver_json, model_dict)
+    if from_installed or from_ver:
         gl.json_data = gl.ver_json
     
-    if from_installed:
-        (hasPrev, hasNext, pages) = pagecontrol(gl.ver_json)
+    if gl.json_data != None and gl.json_data != "timeout":
+        if not from_ver:
+            (hasPrev, hasNext, current_page, total_pages) = pagecontrol(gl.json_data)
+        else:
+            current_page = 1
+            total_pages = 1
+            hasPrev = False
+            hasNext = False
         model_dict = {}
-        for item in gl.ver_json['items']:
+        for item in gl.json_data['items']:
             model_dict[item['name']] = item['name']
         
-        HTML = model_list_html(gl.ver_json, model_dict)
-        gl.json_data = gl.ver_json
+        HTML = model_list_html(gl.json_data, model_dict)
+    else:
+        current_page = 1
+        total_pages = 1
+    
+    page_string = f"Page: {current_page}/{total_pages}"
     
     return  (
             gr.Dropdown.update(choices=[v for k, v in model_dict.items()], value="", interactive=True), # Model List
@@ -432,7 +502,7 @@ def update_model_list(content_type, sort_type, period_type, use_search_term, sea
             gr.HTML.update(value=HTML), # HTML Tiles
             gr.Button.update(interactive=hasPrev), # Prev Page Button
             gr.Button.update(interactive=hasNext), # Next Page Button
-            gr.Textbox.update(value=pages), # Page Count
+            gr.Slider.update(value=current_page, maximum=total_pages, label=page_string), # Page Count
             gr.Button.update(interactive=False), # Save Tags
             gr.Button.update(interactive=False), # Save Images
             gr.Button.update(interactive=False), # Download Button
@@ -479,8 +549,8 @@ def update_model_versions(model_name):
                                                 sha256 = json_data.get('sha256', "").upper()
                                                 if sha256 == file_sha256:
                                                     installed_versions.append(version['name'])
-                                    except:
-                                        print(f"failed to read: \"{file}\"")
+                                    except Exception as e:
+                                        print(f"failed to read: \"{file}\": {e}")
                                 
                                 if version_filename == file:
                                     installed_versions.append(version['name'])
@@ -571,14 +641,15 @@ def update_model_info(model_name=None, model_version=None):
                             file_list.append(unique_file_name)
                             
                         model_url = model['downloadUrl']
-                        model_main_url = f"https://civitai.com/models/{item['id']}"
+                        model_main_url = urllib.parse.urljoin(getattr(opts, "civitai_base_url"), f"/models/{item['id']}")
                         img_html = '<div class="sampleimgs"><input type="radio" name="zoomRadio" id="resetZoom" class="zoom-radio" checked>'
                         first_image = True
                         for index, pic in enumerate(model['images']):
                             # Change width value in URL to original image width
                             image_url = re.sub(r'/width=\d+', f'/width={pic["width"]}', pic["url"])
-                            
-                            if first_image:                                
+                            if pic['type'] == "video":
+                                image_url = image_url.replace("width=", "transcode=true,width=")
+                            if first_image and pic['type'] != "video":
                                 # Set a data attribute on the first image to designate it as preview
                                 preview_attr = f'data-preview-img={image_url}'
                                 first_image = False
@@ -709,7 +780,7 @@ def update_model_info(model_name=None, model_version=None):
                 
         return  (
                 gr.HTML.update(value=output_html), # Model Preview
-                gr.Textbox.update(value=output_training), # Trained Tags
+                gr.Textbox.update(value=output_training, interactive=True), # Trained Tags
                 gr.Textbox.update(value=output_basemodel), # Base Model Number
                 gr.Button.update(visible=BtnDown, interactive=BtnDown), # Download Button
                 gr.Button.update(visible=BtnDel, interactive=BtnDel), # Delete Button
@@ -723,7 +794,7 @@ def update_model_info(model_name=None, model_version=None):
     else:
         return  (
                 gr.HTML.update(value=None), # Model Preview
-                gr.Textbox.update(value=None), # Trained Tags
+                gr.Textbox.update(value=None, interactive=False), # Trained Tags
                 gr.Textbox.update(value=''), # Base Model Number
                 gr.Button.update(visible=BtnDown), # Download Button
                 gr.Button.update(visible=BtnDel, interactive=BtnDel), # Delete Button
