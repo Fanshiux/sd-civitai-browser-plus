@@ -13,7 +13,7 @@ import stat
 import json
 import time
 from pathlib import Path
-from modules.shared import opts
+from modules.shared import opts, cmd_opts
 import scripts.civitai_global as gl
 import scripts.civitai_api as _api
 import scripts.civitai_file_manage as _file
@@ -32,13 +32,12 @@ def random_number(prev):
 
 gl.init()
 current_sha256 = None
-rpc_secret = None
 
 def rpc_running():
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(2)
-        sock.connect(("localhost", 6800))
+        sock.connect(("localhost", 24000))
 
         return True
     except Exception as e:
@@ -49,15 +48,10 @@ def rpc_running():
     return False
 
 def start_aria2_rpc(aria2c):
-    global rpc_secret
-    if not rpc_secret:
-        rpc_secret = str(random_number(0))
-    time.sleep(1)
     if not rpc_running():
         try:
             show_log = getattr(opts, "show_log", False)
-            aria2_flags = getattr(opts, "aria2_flags", "")
-            cmd = f'"{aria2c}" --enable-rpc --rpc-listen-all --rpc-secret {rpc_secret} --check-certificate=false --ca-certificate=" " --file-allocation=none {aria2_flags}'
+            cmd = f'"{aria2c}" --enable-rpc --rpc-listen-all --check-certificate=false --ca-certificate=" " --file-allocation=none'
             subprocess_args = {'shell': True}
             if not show_log:
                 subprocess_args.update({'stdout': subprocess.DEVNULL, 'stderr': subprocess.DEVNULL})
@@ -72,17 +66,23 @@ os_type = platform.system()
 
 if os_type == 'Windows':
     aria2 = os.path.join(aria2path, 'win', 'aria2.exe')
+    start_aria2_rpc(aria2)
 elif os_type == 'Linux':
     aria2 = os.path.join(aria2path, 'lin', 'aria2')
     st = os.stat(aria2)
     os.chmod(aria2, st.st_mode | stat.S_IEXEC)
-elif os_type == 'Darwin':
-    aria2 = os.path.join(aria2path, 'mac', 'aria2')
-
-start_aria2_rpc(aria2)
+    start_aria2_rpc(aria2)
 
 class TimeOutFunction(Exception):
     pass
+
+def random_number(prev):
+    number = str(random.randint(10000, 99999))
+
+    while number == prev:
+        number = str(random.randint(10000, 99999))
+    
+    return number
 
 def download_start(download_start, model_name, model_filename, version, sha256, modelId):
     global current_sha256, current_id
@@ -90,7 +90,8 @@ def download_start(download_start, model_name, model_filename, version, sha256, 
     gl.current_download = model_filename
     gl.cancel_status = False
     gl.recent_model = model_name
-    current_sha256 = sha256.upper()
+    if sha256:
+        current_sha256 = sha256.upper()
     for item in gl.json_data['items']:
         if item['name'] == model_name:
             current_id = item['id']
@@ -153,13 +154,13 @@ def convert_size(size):
         size /= 1024
     return f"{size:.2f} GB"
 
-def download_file(url, file_path, install_path, progress=gr.Progress()):
+def download_file(url, file_path, install_path, progress=gr.Progress() if queue else None):
     disable_dns = getattr(opts, "disable_dns", False)
     split_aria2 = getattr(opts, "split_aria2", 64)
     
     max_retries = 5
     gl.download_fail = False
-    aria2_rpc_url = "http://localhost:6800/jsonrpc"
+    aria2_rpc_url = "http://localhost:24000/jsonrpc"
 
     if os.path.exists(file_path):
         os.remove(file_path)
@@ -188,7 +189,10 @@ def download_file(url, file_path, install_path, progress=gr.Progress()):
     
     try:
         response = requests.post(aria2_rpc_url, data=payload)
-        gid = json.loads(response.text)['result']
+        data = json.loads(response.text)
+        if 'result' not in data:
+                raise ValueError(f'Failed to start download: {data}')
+        gid = data['result']
     except Exception as e:
         print(f"Failed to start download: {e}")
         gl.download_fail = True
@@ -203,7 +207,8 @@ def download_file(url, file_path, install_path, progress=gr.Progress()):
                 "params": ["token:" + rpc_secret, gid]
             })
             requests.post(aria2_rpc_url, data=payload)
-            progress(0, desc=f"Download cancelled.")
+            if progress != None:
+                progress(0, desc=f"Download cancelled.")
             time.sleep(2)
             return
 
@@ -230,18 +235,20 @@ def download_file(url, file_path, install_path, progress=gr.Progress()):
                 eta_formatted = time.strftime("%H:%M:%S", time.gmtime(eta_seconds))
             else:
                 eta_formatted = "XX:XX:XX"
-            
-            progress(progress_percent / 100, desc=f"Downloading: {file_name} - {convert_size(completed_length)}/{convert_size(total_length)} - Speed: {convert_size(download_speed)}/s - ETA: {eta_formatted}")
+            if progress != None:
+                progress(progress_percent / 100, desc=f"Downloading: {file_name} - {convert_size(completed_length)}/{convert_size(total_length)} - Speed: {convert_size(download_speed)}/s - ETA: {eta_formatted}")
             
             if status_info['status'] == 'complete':
                 print(f"Model saved to: {file_path}")
-                progress(1, desc=f"Model saved to: {file_path}")
+                if progress != None:
+                    progress(1, desc=f"Model saved to: {file_path}")
                 time.sleep(2)
                 gl.download_fail = False
                 return
             
             if status_info['status'] == 'error':
-                progress(0, desc=f"Encountered an error during download of: \"{file_name}\" Please try again.")
+                if progress != None:
+                    progress(0, desc=f"Encountered an error during download of: \"{file_name}\" Please try again.")
                 gl.download_fail = True
                 time.sleep(2)
                 return
@@ -252,7 +259,8 @@ def download_file(url, file_path, install_path, progress=gr.Progress()):
             print(f"An error occurred: {e}")
             max_retries -= 1
             if max_retries == 0:
-                progress(0, desc="An error occurred while downloading the file, please try again.")
+                if progress != None:
+                    progress(0, desc="An error occurred while downloading the file, please try again.")
                 time.sleep(2)
                 gl.download_fail = True
                 return
@@ -277,7 +285,7 @@ def info_to_json(install_path, unpackList=None):
     with open(json_file, 'w') as f:
         json.dump(data, f, indent=4)
 
-def download_file_old(url, file_path, progress=gr.Progress()):
+def download_file_old(url, file_path, progress=gr.Progress() if queue else None):
     gl.download_fail = False
     max_retries = 5
     if os.path.exists(file_path):
@@ -288,7 +296,8 @@ def download_file_old(url, file_path, progress=gr.Progress()):
     start_time = time.time()
     while True:
         if gl.cancel_status:
-            progress(0, desc=f"Download cancelled.")
+            if progress != None:
+                progress(0, desc=f"Download cancelled.")
             time.sleep(2)
             return
         if os.path.exists(file_path):
@@ -300,17 +309,20 @@ def download_file_old(url, file_path, progress=gr.Progress()):
             while gl.isDownloading:
                 try:
                     if gl.cancel_status:
-                        progress(0, desc=f"Download cancelled.")
+                        if progress != None:
+                            progress(0, desc=f"Download cancelled.")
                         time.sleep(2)
                         return
                     try:
                         if gl.cancel_status:
-                            progress(0, desc=f"Download cancelled.")
+                            if progress != None:
+                                progress(0, desc=f"Download cancelled.")
                             time.sleep(2)
                             return
                         response = requests.get(url, headers=headers, stream=True, timeout=4)
                         if response.status_code == 404:
-                            progress(0, desc="File returned a 404, file is not found.")
+                            if progress != None:
+                                progress(0, desc="File returned a 404, file is not found.")
                             time.sleep(3)
                             gl.download_fail = True
                             return
@@ -324,7 +336,8 @@ def download_file_old(url, file_path, progress=gr.Progress()):
                     for chunk in response.iter_content(chunk_size=1024):
                         if chunk:
                             if gl.cancel_status:
-                                progress(0, desc=f"Download cancelled.")
+                                if progress != None:
+                                    progress(0, desc=f"Download cancelled.")
                                 time.sleep(2)
                                 return
                             f.write(chunk)
@@ -337,10 +350,8 @@ def download_file_old(url, file_path, progress=gr.Progress()):
                                 eta_formatted = time.strftime("%H:%M:%S", time.gmtime(eta_seconds))
                             else:
                                 eta_formatted = "XX:XX:XX"
-                            progress(
-                                downloaded_size / total_size,
-                                desc=f"Downloading: {file_name_display} {convert_size(downloaded_size)} / {convert_size(total_size)} - Speed: {convert_size(int(download_speed))}/s - ETA: {eta_formatted}"
-                            )
+                            if progress != None:
+                                progress(downloaded_size / total_size, desc=f"Downloading: {file_name_display} {convert_size(downloaded_size)} / {convert_size(total_size)} - Speed: {convert_size(int(download_speed))}/s - ETA: {eta_formatted}")
                             if gl.isDownloading == False:
                                 response.close
                                 break
@@ -348,10 +359,12 @@ def download_file_old(url, file_path, progress=gr.Progress()):
                     break
 
                 except TimeOutFunction:
-                    progress(0, desc="CivitAI API did not respond, retrying...")
+                    if progress != None:
+                        progress(0, desc="CivitAI API did not respond, retrying...")
                     max_retries -= 1
                     if max_retries == 0:
-                        progress(0, desc="Unable to download file due to time-out, please try to download again.")
+                        if progress != None:
+                            progress(0, desc="Unable to download file due to time-out, please try to download again.")
                         time.sleep(2)
                         gl.download_fail = True
                         return
@@ -365,13 +378,15 @@ def download_file_old(url, file_path, progress=gr.Progress()):
         if downloaded_size >= total_size:
             if not gl.cancel_status:
                 print(f"Model saved to: {file_path}")
-                progress(1, desc=f"Model saved to: {file_path}")
+                if progress != None:
+                    progress(1, desc=f"Model saved to: {file_path}")
                 time.sleep(2)
                 gl.download_fail = False
                 return
 
         else:
-            progress(0, desc="Download failed, please try again.")
+            if progress != None:
+                progress(0, desc="Download failed, please try again.")
             print(f"Error: File download failed: {file_name_display}")
             gl.download_fail = True
             time.sleep(2)
@@ -379,8 +394,6 @@ def download_file_old(url, file_path, progress=gr.Progress()):
                 os.remove(file_path)
 
 def download_create_thread(download_finish, url, file_name, preview_html, create_json, trained_tags, install_path, model_name, list_versions, progress=gr.Progress()):
-    url = urllib.parse.urljoin(getattr(opts, "civitai_base_url"), urllib.parse.urlparse(url).path)
-
     gr_components = _api.update_model_versions(model_name)
     gl.cancel_status = False
     use_aria2 = getattr(opts, "use_aria2", True)
@@ -399,7 +412,7 @@ def download_create_thread(download_finish, url, file_name, preview_html, create
         
     path_to_new_file = os.path.join(install_path, file_name)
     
-    if use_aria2:
+    if use_aria2 and os_type != 'Darwin':
         thread = threading.Thread(target=download_file, args=(url, path_to_new_file, install_path, progress))
     else:
         thread = threading.Thread(target=download_file_old, args=(url, path_to_new_file, progress))
